@@ -44,12 +44,16 @@ def register_onaccept(form):
     # If Organisation is provided, then: add HRM record & add to 'Org_X_Access' role
     person = auth.s3_register(form)
 
+    # TEMP DEMO purposes
+    # Add user to Admins group to access HRM
+    query = (db.pr_person.id == person) & \
+            (db.pr_person.uuid == auth.settings.table_user.person_uuid)
+    user_id = db(query).select(db.auth_user.id,
+                               limitby=(0, 1)).first().id
+    auth.s3_assign_role(user_id, ADMIN)
+
     if deployment_settings.has_module("delphi"):
         # Add user as a participant of the default problem group
-        query = (db.pr_person.id == person) & \
-            (db.pr_person.uuid == auth.settings.table_user.person_uuid)
-        user_id = db(query).select(db.auth_user.id,
-                                   limitby=(0, 1)).first().id
         s3mgr.load("delphi_group")
         table = db.delphi_group
         query = (table.deleted == False)
@@ -132,57 +136,77 @@ def index():
         SHELTERS = ""
 
     # Menu Boxes
-    menu_btns = [#div, label, app, function
-                ["facility", SHELTERS, "cr", "shelter"],
-                ["facility", T("Warehouses"), "inv", "warehouse"],
-                ["facility", T("Hospitals"), "hms", "hospital"],
-                ["facility", T("Offices"), "org", "office"],
-                ["sit", T("Incidents"), "irs", "ireport"],
-                ["sit", T("Assessments"), "survey", "series"],
-                ["sit", T("Assets"), "asset", "asset"],
-                ["sit", T("Inventory Items"), "inv", "inv_item"],
-                #["dec", T("Gap Map"), "project", "gap_map"],
-                #["dec", T("Gap Report"), "project", "gap_report"],
-                ["dec", T("Requests"), "req", "req"],
-                ["res", T("Projects"), "project", "project"],
-                ["res", T("Activities"), "project", "site"],
-                ["res", T("Commitments"), "req", "commit"],
-                ["res", T("Sent Shipments"), "inv", "send"],
-                ["res", T("Received Shipments"), "inv", "recv"],
+    # NB Order defined later (in sit_dec_res_box)
+    menu_btns = [#div, label, app, function, is_icon
+                ["vol", T("Search Volunteer"), "hrm", "human_resource/search?group=volunteer", True],
+                ["vol", T("View Volunteers"), "hrm", "human_resource/search?group=volunteer", False],
+                ["vol", T("Add Volunteer"), "hrm", "human_resource/create?group=volunteer", False],
+                ["qua", T("View Qualifications"), "hrm", "certificate", True],
+                ["qua", T("View Qualifications"), "hrm", "certificate", False],
+                ["qua", T("Add Qualification"), "hrm", "certificate/create", False],
+                ["evt", T("View Event"), "hrm", "event", True],
+                ["evt", T("View Events"), "hrm", "event", False],
+                ["evt", T("Add Event"), "hrm", "event/create", False],
+                ["adm", T("Deploy Volunteers"), "hrm", "event", True],
+                ["adm", T("Deploy Volunteers"), "hrm", "event", False],
+                ["not", T("Send Notification"), "msg", "compose", True],
+                ["not", T("Send Notification"), "msg", "compose", False],
+                ["rep", T("Create Report"), "hrm", "experience/analyze?rows=person_id&cols=event_id$type&fact=event_id$hours&aggregate=sum", True],
+                ["rep", T("View Reports"), "hrm", "experience/analyze?rows=person_id&cols=event_id$type&fact=event_id$hours&aggregate=sum", False],
                 ]
 
-    # Change to (Mitigation)/Preparedness/Response/Recovery?
+    # NB Order defined later (in sit_dec_res_box)
     menu_divs = {"facility": DIV( H3(T("Facilities")),
                                  _id = "facility_box", _class = "menu_box"),
-                 "sit": DIV( H3(T("Situation")),
-                              _id = "menu_div_sit", _class = "menu_div"),
-                 "dec": DIV( H3(T("Decision")),
-                              _id = "menu_div_dec", _class = "menu_div"),
-                 "res": DIV( H3(T("Response")),
-                              _id = "menu_div_res", _class = "menu_div"),
+                 "vol": DIV( H3(T("Volunteers")),
+                              _id = "menu_div_vol", _class = "menu_div"),
+                 "qua": DIV( H3(T("Qualifications")),
+                              _id = "menu_div_qua", _class = "menu_div"),
+                 "evt": DIV( H3(A(T("Events")), _href="blue"),
+                              _id = "menu_div_evt",
+                              _class = "menu_div"),
+                 "adm": DIV( H3(T("Volunteer Admin")),
+                              _id = "menu_div_adm", _class = "menu_div"),
+                 "not": DIV( H3(T("Notifications")),
+                              _id = "menu_div_not", _class = "menu_div"),
+                 "rep": DIV( H3(T("Reports")),
+                              _id = "menu_div_rep", _class = "menu_div"),
                 }
 
-    for div, label, app, function in menu_btns:
+    for div, label, app, function, is_icon in menu_btns:
         if deployment_settings.has_module(app):
             # @ToDo: Also check permissions (e.g. for anonymous users)
-            menu_divs[div].append(A( DIV(label,
-                                         _class = "menu-btn-r"),
-                                     _class = "menu-btn-l",
-                                     _href = URL(app,function)
-                                    )
-                                 )
+            if is_icon:
+                menu_divs[div].append(A( DIV(label,
+                                             _class = "icon"),
+                                         _class = "",
+                                         _href = URL(app, function)
+                                        )
+                                     )
+            else:
+                menu_divs[div].append(DIV(A(label,
+                                         _class = "",
+                                         _href = URL(app, function)
+                                        )
+                                        )
+                                     )
 
     div_arrow = DIV(IMG(_src = "/%s/static/img/arrow_blue_right.png" % \
                                request.application),
                           _class = "div_arrow")
-    sit_dec_res_box = DIV(menu_divs["sit"],
-                          div_arrow,
-                          menu_divs["dec"],
-                          div_arrow,
-                          menu_divs["res"],
+
+    div_clear = DIV(T(""),
+                        _class="clear")
+
+    sit_dec_res_box = DIV(menu_divs["vol"],
+                          menu_divs["qua"],
+                          menu_divs["evt"],
+                          div_clear,
+                          menu_divs["adm"],
+                          menu_divs["not"],
+                          menu_divs["rep"],
                           _id = "sit_dec_res_box",
                           _class = "menu_box fleft swidth"
-                     #div_additional,
                     )
     facility_box  = menu_divs["facility"]
     facility_box.append( A( IMG(_src = "/%s/static/img/map_icon_128.png" % \

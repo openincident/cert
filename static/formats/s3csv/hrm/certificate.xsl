@@ -35,6 +35,7 @@
                 <xsl:call-template name="Organisation"/>
             </xsl:for-each>
 
+            <!-- Certificates -->
             <xsl:apply-templates select="table/row"/>
         </s3xml>
     </xsl:template>

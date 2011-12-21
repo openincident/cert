@@ -152,8 +152,10 @@ if deployment_settings.has_module(module):
     }
 
     hrm_status_opts = {
-        1: T("active"),
-        2: T("obsolete") # retired is a better term?
+        1: T("pending"),
+        2: T("active"),
+        3: T("ineligible"),
+        4: T("inactive"),
     }
 
     tablename = "hrm_human_resource"
@@ -161,7 +163,8 @@ if deployment_settings.has_module(module):
                             super_link(db.sit_trackable),
 
                             # Administrative data
-                            organisation_id(widget=S3OrganisationAutocompleteWidget(default_from_profile=True),
+                            organisation_id(#Dropdown not autocomplete
+                                            #widget=S3OrganisationAutocompleteWidget(default_from_profile=True),
                                             empty=False),
                             person_id(widget=S3AddPersonWidget(),
                                       requires=IS_ADD_PERSON_WIDGET(),
@@ -176,7 +179,11 @@ if deployment_settings.has_module(module):
                                     hrm_type_opts.get(opt,
                                                       UNKNOWN_OPT)),
                             #Field("code", label=T("Staff ID")),
-                            Field("job_title", label=T("Job Title")),
+                            Field("job_title",
+                                  # CERT doesn't need these
+                                  readable=False,
+                                  writable=False,
+                                  label=T("Job Title")),
 
                             # Current status
                             Field("status", "integer",
@@ -324,6 +331,12 @@ if deployment_settings.has_module(module):
                     represent ="%(name)s",
                     cols = 3
                   ),
+                  s3base.S3SearchOptionsWidget(
+                    name="human_resource_search_status",
+                    label="Status",
+                    field=["status"]
+                  ),
+
                   s3base.S3SearchLocationWidget(
                     name="human_resource_search_map",
                     label=T("Map"),
@@ -549,6 +562,7 @@ if deployment_settings.has_module(module):
     s3mgr.model.add_component(table,
                               org_organisation="organisation_id",
                               org_site=super_key(db.org_site))
+
     # =========================================================================
     # Skills
     #
@@ -633,6 +647,7 @@ if deployment_settings.has_module(module):
         # ---------------------------------------------------------------------
         # Skills
         # - these can be simple generic skills or can come from certifications
+        # (CERT is only from Certifications)
         #
         tablename = "hrm_skill"
         table = db.define_table(tablename,
@@ -832,9 +847,11 @@ S3FilterFieldChange({
                                 competency_id(),
                                 # This field can only be filled-out by specific roles
                                 # Once this has been filled-out then the other fields are locked
+                                # Unused by CERT
                                 organisation_id(label = T("Confirming Organization"),
                                                 widget = S3OrganisationAutocompleteWidget(default_from_profile = True),
                                                 comment = None,
+                                                readable = False,
                                                 writable = False),
                                 s3_comments(),
                                 *s3_meta_fields())
@@ -918,7 +935,319 @@ S3FilterFieldChange({
 
 
         # =====================================================================
-        # Credentials
+        # Certificates
+        #
+        # NB Some Orgs will only trust the certificates of some Orgs
+        # - we currently make no attempt to manage this trust chain
+        #
+        tablename = "hrm_certificate"
+        table = db.define_table(tablename,
+                                Field("name",
+                                      length=128,   # Mayon Compatibility
+                                      notnull=True,
+                                      label=T("Name")),
+                                organisation_id(# Simple dropdown better for CERT
+                                                #widget = S3OrganisationAutocompleteWidget(default_from_profile = True),
+                                                # CERT don't need this
+                                                readable=False,
+                                                writable=False,
+                                                label=T("Certifying Organization")),
+                                Field("expiry", "integer",
+                                      label = T("Expiry (months)")),
+                                *s3_meta_fields())
+
+        s3.crud_strings[tablename] = Storage(
+            title_create = T("Add Certificate"),
+            title_display = T("Certificate Details"),
+            title_list = T("Certificate Catalog"),
+            title_update = T("Edit Certificate"),
+            title_search = T("Search Certificates"),
+            subtitle_create = T("Add Certificate"),
+            subtitle_list = T("Certificates"),
+            label_list_button = T("List Certificates"),
+            label_create_button = T("Add New Certificate"),
+            label_delete_button = T("Delete Certificate"),
+            msg_record_created = T("Certificate added"),
+            msg_record_modified = T("Certificate updated"),
+            msg_record_deleted = T("Certificate deleted"),
+            msg_no_match = T("No entries found"),
+            msg_list_empty = T("Currently no entries in the catalog"))
+
+        def hrm_certificate_represent(id):
+            table = db.hrm_certificate
+            #otable = db.org_organisation
+            #query = (table.id == id) & \
+            #        (table.organisation_id == otable.id)
+            #cert = db(query).select(table.name,
+            #                        otable.name,
+            #                        limitby = (0, 1)).first()
+            #if cert:
+            #    represent = cert.hrm_certificate.name
+            #    if cert.org_organisation:
+            #        represent = "%s (%s)" % (represent,
+            #                                 cert.org_organisation.name)
+            query = (table.id == id)
+            cert = db(query).select(table.name,
+                                    limitby = (0, 1)).first()
+            if cert:
+                represent = cert.name
+            else:
+                represent = "-"
+
+            return represent
+
+        label_create = s3.crud_strings[tablename].label_create_button
+        certificate_id = S3ReusableField("certificate_id", db.hrm_certificate,
+                                         sortby = "name",
+                                         label = T("Certificate"),
+                                         requires = IS_NULL_OR(IS_ONE_OF(db,
+                                                                         "hrm_certificate.id",
+                                                                         hrm_certificate_represent,
+                                                                         orderby="hrm_certificate.name")),
+                                         represent = hrm_certificate_represent,
+                                         comment = DIV(A(label_create,
+                                                         _class="colorbox",
+                                                         _href=URL(c="hrm",
+                                                                   f="certificate",
+                                                                   args="create",
+                                                                   vars=dict(format="popup")),
+                                                         _target="top",
+                                                         _title=label_create),
+                                              DIV(DIV(_class="tooltip",
+                                                      _title="%s|%s" % (label_create,
+                                                                        T("Add a new certificate to the catalog."))))),
+                                         ondelete = "RESTRICT")
+
+        # =====================================================================
+        # CERT Tables
+
+        # =====================================================================
+        # Certificate Requirements
+        #
+        EVENT_TYPE = T("Certification Event")
+        tablename = "hrm_certificate_requirement"
+        table = db.define_table(tablename,
+                                Field("event_type",
+                                      notnull=True,
+                                      label=EVENT_TYPE),
+                                #Field("hours", "integer"),
+                                #Field("number", "integer"),
+                                certificate_id(),
+                                *s3_meta_fields())
+
+        requirement_id = S3ReusableField("requirement_id", db.hrm_certificate_requirement,
+                                         sortby="event_type",
+                                         label=EVENT_TYPE,
+                                         requires=IS_NULL_OR(IS_ONE_OF(db,
+                                                                       "hrm_certificate_requirement.id",
+                                                                       "%(event_type)s",
+                                                                       orderby="hrm_certificate_requirement.event_type")),
+                                         represent =  lambda id: \
+                                            (id and [db.hrm_certificate_requirement[id].event_type] or [NONE])[0],
+                                         ondelete = "CASCADE")
+
+        s3.crud_strings[tablename] = Storage(
+            title_create = T("Add Certificate Requirement"),
+            title_display = T("Certificate Requirement Details"),
+            title_list = T("Certificate Requirements"),
+            title_update = T("Edit Certificate Requirement"),
+            title_search = T("Search Certificate Requirements"),
+            subtitle_create = T("Add Requirement"),
+            subtitle_list = T("Requirements"),
+            label_list_button = T("List Requirements"),
+            label_create_button = T("Add New Requirement"),
+            label_delete_button = T("Delete Requirement"),
+            msg_record_created = T("Certificate Requirement added"),
+            msg_record_modified = T("Certificate Requirement updated"),
+            msg_record_deleted = T("Certificate Requirement deleted"),
+            msg_no_match = T("No entries found"),
+            msg_list_empty = T("Currently no requirements for this certificate"))
+
+        # =====================================================================
+        # Events
+        # - All Events, whether Incidents, Trainings or even Socials
+        # (Not to be confused with Sahana's Events module)
+
+        hrm_event_type_opts = {
+            "TRAINING": T("Training"),
+            "EMERGENCY": T("Emergency Deployment"),
+            "PLANNED": T("Planned Deployment"),
+            "OUTREACH": T("Outreach"),
+            "SOCIAL": T("SocialCERT")
+        }
+
+        tablename = "hrm_event"
+        table = db.define_table(tablename,
+                                #sit_id,
+                                Field("type", length="32",
+                                      label = T("Event Type"),
+                                      requires = IS_IN_SET(hrm_event_type_opts,
+                                                           zero=None),
+                                      represent = lambda opt: \
+                                        hrm_event_type_opts.get(opt,
+                                                                UNKNOWN_OPT)),
+                                organisation_id(label = T("Initiating Entity"),
+                                                # Simple dropdown better for CERT
+                                                #widget = S3OrganisationAutocompleteWidget(default_from_profile = True)
+                                                widget = None
+                                                ),
+                                Field("name",
+                                      label = T("Event Name"),
+                                      length=64),       # Mayon Compatibility
+                                Field("shifts", "boolean",
+                                      widget=S3BooleanWidget(click_to_show=False,
+                                                             fields=["datetime",
+                                                                     "hours"]),
+                                      label=T("Shifts")),
+                                Field("datetime", "datetime",
+                                      # @ToDo: This should be writable if there is just 1 shift & hidden if shifts are used
+                                      #readable = False,
+                                      #writable = False,
+                                      widget = S3DateTimeWidget(),
+                                      requires = [IS_EMPTY_OR(
+                                                  IS_UTC_DATETIME())],
+                                      represent = s3_utc_represent,
+                                      label = T("Date / Time")),
+                                Field("hours", "integer",
+                                      # @ToDo: This should be writable if there is just 1 shift & hidden if shifts are used
+                                      #readable = False,
+                                      #writable = False,
+                                      label=T("Hours")),
+                                Field("shift_locations", "boolean",
+                                      widget=S3BooleanWidget(click_to_show=False,
+                                                             fields=["location_id"]),
+                                      label=T("Shifts have different Locations?")),
+                                location_id(),
+                                multi_skill_id(label = T("Required Skills")),
+                                # Certification this event contributes to
+                                certificate_id(comment=DIV(_class="tooltip",
+                                                           _title="%s|%s" % (
+                                                                T("Certificate"),
+                                                                T("Certificate the participation in this Event is linked to.")))),
+
+                                requirement_id(label=T("Requirement"),
+                                               comment=DIV(_class="tooltip",
+                                                           _title="%s|%s" % (
+                                                                T("Requirement"),
+                                                                T("Requirement of the Certificate that is fulfilled by the participation in this Event.")))),
+                                s3_comments(label=T("Notes")),
+                                *s3_meta_fields())
+
+        s3.crud_strings[tablename] = Storage(
+            title_create = T("Add Event"),
+            title_display = T("Event Details"),
+            title_list = T("Events"),
+            title_update = T("Edit Event"),
+            title_search = T("Search Events"),
+            subtitle_create = T("Add Event"),
+            subtitle_list = T("Events"),
+            label_list_button = T("List Events"),
+            label_create_button = T("Add Event"),
+            label_delete_button = T("Remove Event"),
+            msg_record_created = T("Event added"),
+            msg_record_modified = T("Event updated"),
+            msg_record_deleted = T("Event removed"),
+            msg_list_empty = T("Currently no Events registered"))
+
+        def hrm_represent(id):
+            if not id:
+                return None
+            if isinstance(id, Row):
+                # Do not repeat the lookup if already done by IS_ONE_OF or RHeader
+                event = id
+            else:
+                table = db.hrm_event
+                query = (table.id == id)
+                event = db(query).select(table.name,
+                                         table.datetime,
+                                         limitby=(0, 1)).first()
+            if event.datetime:
+                represent = "%s (%s)" % (event.name,
+                                         s3_date_represent(event.datetime))
+            else:
+                represent = event.name
+            return represent
+
+        event_id = S3ReusableField("event_id", db.hrm_event,
+                                   sortby = "name",
+                                   label = T("Event"),
+                                   requires = IS_NULL_OR(IS_ONE_OF(db,
+                                                                   "hrm_event.id",
+                                                                   hrm_represent,
+                                                                   orderby="~hrm_event.datetime",
+                                                                   sort=True)),
+                                   represent = lambda id: \
+                                       (id and [db.hrm_event[id].name] or [NONE])[0],
+                                   comment = "",
+                                   ondelete = "RESTRICT")
+
+
+        s3mgr.configure("hrm_event",
+                        # Stay on the record with tabs visible
+                        update_next = URL(args=["[id]", "update"]))
+
+        # ---------------------------------------------------------------------
+        # Shifts
+        # - parts of an Event
+        # Ideally this would default to 1-1 component embedded in the main page
+        # with an option to open up the tab with a list of Shifts
+        tablename = "hrm_shift"
+        table = db.define_table(tablename,
+                                event_id(),
+                                Field("datetime", "datetime",
+                                      widget = S3DateTimeWidget(),
+                                      requires = [IS_EMPTY_OR(
+                                                  IS_UTC_DATETIME())],
+                                      represent = s3_utc_represent,
+                                      label=T("Date/Time")),
+                                Field("hours", "integer",
+                                      label=T("Hours")),
+                                location_id(),
+                                *s3_meta_fields())
+
+        s3.crud_strings[tablename] = Storage(
+            title_create = T("Add Shift"),
+            title_display = T("Shift Details"),
+            title_list = T("Shifts"),
+            title_update = T("Edit Shift"),
+            title_search = T("Search Shifts"),
+            subtitle_create = T("Add Shift"),
+            subtitle_list = T("Shifts"),
+            label_list_button = T("List Shifts"),
+            label_create_button = T("Add New Shift"),
+            label_delete_button = T("Remove Shift"),
+            msg_record_created = T("Shift added"),
+            msg_record_modified = T("Shift updated"),
+            msg_record_deleted = T("Shift removed"),
+            msg_list_empty = T("Currently no Shifts registered"))
+
+        # ---------------------------------------------------------------------
+        # Notes
+        # - private notes attached to a person record for the eyes of the Incident Commander
+        tablename = "hrm_note"
+        table = db.define_table(tablename,
+                                person_id(),
+                                s3_comments(),
+                                *s3_meta_fields())
+
+        s3.crud_strings[tablename] = Storage(
+            title_create = T("Add Note"),
+            title_display = T("Note Details"),
+            title_list = T("Notes"),
+            title_update = T("Edit Note"),
+            title_search = T("Search Notes"),
+            subtitle_create = T("Add Note"),
+            subtitle_list = T("Notes"),
+            label_list_button = T("List Notes"),
+            label_create_button = T("Add Note"),
+            label_delete_button = T("Remove Note"),
+            msg_record_created = T("Note added"),
+            msg_record_modified = T("Note updated"),
+            msg_record_deleted = T("Note removed"),
+            msg_list_empty = T("Currently no Notes registered"))
+
+        # =====================================================================
+        # Credentials - unused by CERT currently
         #
         #   This determines whether an Organisation believes a person is suitable
         #   to fulfil a role. It is determined based on a combination of
@@ -961,7 +1290,8 @@ S3FilterFieldChange({
                                 person_id(),
                                 job_role_id(),
                                 organisation_id(empty=False,
-                                                widget = S3OrganisationAutocompleteWidget(default_from_profile = True),
+                                                # Simple dropdown better for CERT
+                                                #widget = S3OrganisationAutocompleteWidget(default_from_profile = True),
                                                 label=T("Credentialling Organization")),
                                 Field("performance_rating", "integer",
                                       label = T("Performance Rating"),
@@ -994,7 +1324,7 @@ S3FilterFieldChange({
             msg_list_empty = T("Currently no Credentials registered"))
 
         # =========================================================================
-        # Courses
+        # Courses - unused by CERT
         #
         tablename = "hrm_course"
         table = db.define_table(tablename,
@@ -1051,7 +1381,7 @@ S3FilterFieldChange({
                                 )
 
         # =====================================================================
-        # Trainings
+        # Trainings - unused for CERT
         #
         # These are an element of credentials:
         # - a minimum number of hours of training need to be done each year
@@ -1126,87 +1456,7 @@ S3FilterFieldChange({
         table.virtualfields.append(HRMTrainingVirtualFields())
 
         # =====================================================================
-        # Certificates
-        #
-        # NB Some Orgs will only trust the certificates of some Orgs
-        # - we currently make no attempt to manage this trust chain
-        #
-
-        tablename = "hrm_certificate"
-        table = db.define_table(tablename,
-                                Field("name",
-                                      length=128,   # Mayon Compatibility
-                                      notnull=True,
-                                      label=T("Name")),
-                                organisation_id(widget = S3OrganisationAutocompleteWidget(default_from_profile = True),
-                                                label=T("Certifying Organization")),
-                                Field("expiry", "integer",
-                                      label = T("Expiry (months)")),
-                                *s3_meta_fields())
-
-        s3.crud_strings[tablename] = Storage(
-            title_create = T("Add Certificate"),
-            title_display = T("Certificate Details"),
-            title_list = T("Certificate Catalog"),
-            title_update = T("Edit Certificate"),
-            title_search = T("Search Certificates"),
-            subtitle_create = T("Add Certificate"),
-            subtitle_list = T("Certificates"),
-            label_list_button = T("List Certificates"),
-            label_create_button = T("Add New Certificate"),
-            label_delete_button = T("Delete Certificate"),
-            msg_record_created = T("Certificate added"),
-            msg_record_modified = T("Certificate updated"),
-            msg_record_deleted = T("Certificate deleted"),
-            msg_no_match = T("No entries found"),
-            msg_list_empty = T("Currently no entries in the catalog"))
-
-        def hrm_certificate_represent(id):
-            table = db.hrm_certificate
-            #otable = db.org_organisation
-            #query = (table.id == id) & \
-            #        (table.organisation_id == otable.id)
-            #cert = db(query).select(table.name,
-            #                        otable.name,
-            #                        limitby = (0, 1)).first()
-            #if cert:
-            #    represent = cert.hrm_certificate.name
-            #    if cert.org_organisation:
-            #        represent = "%s (%s)" % (represent,
-            #                                 cert.org_organisation.name)
-            query = (table.id == id)
-            cert = db(query).select(table.name,
-                                    limitby = (0, 1)).first()
-            if cert:
-                represent = cert.name
-            else:
-                represent = "-"
-
-            return represent
-
-        label_create = s3.crud_strings[tablename].label_create_button
-        certificate_id = S3ReusableField("certificate_id", db.hrm_certificate,
-                                         sortby = "name",
-                                         label = T("Certificate"),
-                                         requires = IS_NULL_OR(IS_ONE_OF(db,
-                                                                         "hrm_certificate.id",
-                                                                         hrm_certificate_represent)),
-                                         represent = hrm_certificate_represent,
-                                         comment = DIV(A(label_create,
-                                                         _class="colorbox",
-                                                         _href=URL(c="hrm",
-                                                                   f="certificate",
-                                                                   args="create",
-                                                                   vars=dict(format="popup")),
-                                                         _target="top",
-                                                         _title=label_create),
-                                              DIV(DIV(_class="tooltip",
-                                                      _title="%s|%s" % (label_create,
-                                                                        T("Add a new certificate to the catalog."))))),
-                                         ondelete = "RESTRICT")
-
-        # =====================================================================
-        # Certifications
+        # Certifications (Qualifications in CERT terms)
         #
         # Link table between Persons & Certificates
         #
@@ -1225,10 +1475,10 @@ S3FilterFieldChange({
                                 Field("image", "upload", label=T("Scanned Copy")),
                                 # This field can only be filled-out by specific roles
                                 # Once this has been filled-out then the other fields are locked
-                                organisation_id(label = T("Confirming Organization"),
-                                                widget = S3OrganisationAutocompleteWidget(default_from_profile = True),
-                                                comment = None,
-                                                writable = False),
+                                #organisation_id(label = T("Confirming Organization"),
+                                #                widget = S3OrganisationAutocompleteWidget(default_from_profile = True),
+                                #                comment = None,
+                                #                writable = False),
                                 s3_comments(),
                                 *s3_meta_fields())
 
@@ -1240,21 +1490,80 @@ S3FilterFieldChange({
                                        ])
 
         s3.crud_strings[tablename] = Storage(
-            title_create = T("Add Certification"),
-            title_display = T("Certification Details"),
-            title_list = T("Certifications"),
-            title_update = T("Edit Certification"),
-            title_search = T("Search Certifications"),
-            subtitle_create = T("Add Certification"),
-            subtitle_list = T("Certifications"),
-            label_list_button = T("List Certifications"),
-            label_create_button = T("Add New Certification"),
-            label_delete_button = T("Delete Certification"),
-            msg_record_created = T("Certification added"),
-            msg_record_modified = T("Certification updated"),
-            msg_record_deleted = T("Certification deleted"),
+            title_create = T("Add Qualification"),
+            title_display = T("Qualification Details"),
+            title_list = T("Qualifications"),
+            title_update = T("Edit Qualification"),
+            title_search = T("Search Qualifications"),
+            subtitle_create = T("Add Qualification"),
+            subtitle_list = T("Qualifications"),
+            label_list_button = T("List Qualifications"),
+            label_create_button = T("Add Qualification"),
+            label_delete_button = T("Delete Qualification"),
+            msg_record_created = T("Qualification added"),
+            msg_record_modified = T("Qualification updated"),
+            msg_record_deleted = T("Qualification deleted"),
             msg_no_match = T("No entries found"),
-            msg_list_empty = T("Currently no Certifications registered"))
+            msg_list_empty = T("Currently no Qualifications registered"))
+
+
+        def updateSkills(record):
+            # Deletion and update have a different format
+            try:
+              id = record.vars.id
+              delete = False
+            except:
+              id = record.id
+              delete = True
+
+            table = db.hrm_certification
+            data = table(table.id == id)
+
+            if delete:
+                # I really wish this weren't neccesary, but I really need to get that person_id!
+                def reduction(a, b):
+                    a.update({b["f"]: b["k"]})
+                    return a
+                data = reduce(reduction, eval(data.deleted_fk), {})
+
+            person_id = data["person_id"]
+
+            # Drop all existing competencies: This is a lot easier than selective deletion.
+            db(db.hrm_competency.person_id == person_id).delete()
+
+            # Figure out which competencies we're _supposed_ to have.
+            query = (table.person_id == person_id) & \
+                    (table.certificate_id == db.hrm_certificate_skill.certificate_id) & \
+                    (db.hrm_certificate_skill.skill_id == db.hrm_skill.id)
+            certifications = db(query).select()
+
+            # Add these competencies back in.
+            for certification in certifications:
+                skill = certification["hrm_skill"]
+                cert = certification["hrm_certificate_skill"]
+
+                existing = db((db.hrm_competency.person_id == person_id) & \
+                 (db.hrm_competency.skill_id == skill.id) \
+                 ).select()
+
+                better = True
+                for e in existing:
+                  if e.competency_id.priority > cert.competency_id.priority:
+                    db(db.hrm_competency.id == e.id).delete()
+                  else:
+                    better = False
+                    break
+
+                if better:
+                  db.hrm_competency.update_or_insert(
+                      dict(person_id=person_id, skill_id=skill.id),
+                      person_id=person_id,
+                      competency_id=cert.competency_id,
+                      skill_id=skill.id,
+                      comments="Added by certification"
+                  )
+
+        s3mgr.configure(tablename, onaccept=updateSkills, ondelete=updateSkills)
 
         # =====================================================================
         # Skill Equivalence
@@ -1281,7 +1590,7 @@ S3FilterFieldChange({
             subtitle_create = T("Add Skill Equivalence"),
             subtitle_list = T("Skill Equivalences"),
             label_list_button = T("List Skill Equivalences"),
-            label_create_button = T("Add New Skill Equivalence"),
+            label_create_button = T("Add Skill Equivalence"),
             label_delete_button = T("Delete Skill Equivalence"),
             msg_record_created = T("Skill Equivalence added"),
             msg_record_modified = T("Skill Equivalence updated"),
@@ -1290,7 +1599,7 @@ S3FilterFieldChange({
             msg_list_empty = T("Currently no Skill Equivalences registered"))
 
         # =====================================================================
-        # Course Certificates
+        # Course Certicates
         #
         # Link table between Courses & Certificates
         #
@@ -1300,7 +1609,9 @@ S3FilterFieldChange({
 
         tablename = "hrm_course_certificate"
         table = db.define_table(tablename,
-                                course_id(),
+                                # Trunk will use the Situation super-entity
+                                #sit_id(),
+                                event_id(),
                                 certificate_id(),
                                 *s3_meta_fields())
 
@@ -1322,7 +1633,7 @@ S3FilterFieldChange({
             msg_list_empty = T("Currently no Course Certificates registered"))
 
         # =====================================================================
-        # Mission Record
+        # Participation (Mission Record)
         #
         # These are an element of credentials:
         # - a minimum number of hours of active duty need to be done
@@ -1337,33 +1648,71 @@ S3FilterFieldChange({
         tablename = "hrm_experience"
         table = db.define_table(tablename,
                                 person_id(),
-                                organisation_id(widget = S3OrganisationAutocompleteWidget(default_from_profile = True)),
-                                Field("start_date", "date",
-                                      label=T("Start Date")),
-                                Field("end_date", "date",
-                                      label=T("End Date")),
-                                Field("hours", "integer",
-                                      label=T("Hours")),
-                                Field("place",              # We could make this an event_id?
-                                      label=T("Place")),
+                                # Trunk will use the Situation super-entity
+                                #sit_id(),
+                                event_id(),
                                 *s3_meta_fields())
 
-        s3.crud_strings[tablename] = Storage(
-            title_create = T("Add Mission"),
-            title_display = T("Mission Details"),
-            title_list = T("Missions"),
-            title_update = T("Edit Mission"),
-            title_search = T("Search Missions"),
-            subtitle_create = T("Add Mission"),
-            subtitle_list = T("Missions"),
-            label_list_button = T("List Missions"),
-            label_create_button = T("Add New Mission"),
-            label_delete_button = T("Delete Mission"),
-            msg_record_created = T("Mission added"),
-            msg_record_modified = T("Mission updated"),
-            msg_record_deleted = T("Mission deleted"),
-            msg_no_match = T("No entries found"),
-            msg_list_empty = T("Currently no Missions registered"))
+        s3.crud_strings["hrm_experience"] = Storage(
+                    title_create = T("Add Participation"),
+                    title_display = T("Participation Details"),
+                    title_list = T("Participations"),
+                    title_update = T("Edit Participation"),
+                    title_search = T("Search Participations"),
+                    subtitle_create = T("Add Participation"),
+                    subtitle_list = T("Participations"),
+                    label_list_button = T("List Participations"),
+                    label_create_button = T("Add Participation"),
+                    label_delete_button = T("Delete Participation"),
+                    msg_record_created = T("Participation added"),
+                    msg_record_modified = T("Participation updated"),
+                    msg_record_deleted = T("Participation deleted"),
+                    msg_no_match = T("No entries found"),
+                    msg_list_empty = T("Currently no participations registered"))
+
+        def experience_onaccept(form):
+            """
+                Make the participant of an event a volunteer of the
+                initiating organisation unless the participant already
+                has an HR record.
+
+                @todo: This should always be the host org (i.e. Chicago CERT for this deployment), not initiating org
+                @todo: certify qualifications/skill level for that person as
+                       pre-defined for the event and per previous qualifications
+            """
+
+            ptable = db.hrm_experience
+            etable = db.hrm_event
+            htable = db.hrm_human_resource
+
+            record_id = form.vars.id
+            record = db(ptable.id == record_id).select(ptable.event_id,
+                                                       ptable.person_id,
+                                                       limitby=(0, 1)).first()
+            if not record:
+                return
+
+            query = (etable.id == record.event_id)
+            event = db(query).select(etable.organisation_id,
+                                     limitby=(0, 1)).first()
+            if not event:
+                return
+
+            query = (htable.person_id == record.person_id) & \
+                    (htable.deleted != True)
+            hr_record = db(query).select(htable.organisation_id,
+                                         limitby=(0, 1)).first()
+            if not hr_record:
+                form = Storage()
+                form.vars = Storage(person_id=record.person_id,
+                                    organisation_id=event.organisation_id,
+                                    type=2)
+                form.vars.id = htable.insert(**form.vars)
+                if form.vars.id:
+                    hrm_human_resource_onaccept(form)
+            return
+
+        s3mgr.configure(tablename, onaccept=experience_onaccept)
 
         # Pass variables back to global scope (response.s3.*)
         return dict(
@@ -1374,12 +1723,17 @@ S3FilterFieldChange({
     # Provide a handle to this load function
     s3mgr.loader(skills_tables, "hrm_skill_type",
                                 "hrm_skill",
+                                "hrm_competency_rating",
                                 "hrm_competency",
+                                "hrm_note",
+                                "hrm_event",
                                 "hrm_training",
                                 "hrm_certificate",
+                                "hrm_certificate_requirement",
                                 "hrm_certification",
                                 "hrm_certificate_skill",
                                 "hrm_course_certificate",
+                                "hrm_credential",
                                 "hrm_experience")
 
     def hrm_competency_duplicate(job):
@@ -1482,6 +1836,7 @@ S3FilterFieldChange({
           This callback will be called when importing records
           it will look to see if the record being imported is a duplicate.
 
+
           @param job: An S3ImportJob object which includes all the details
                       of the record being imported
 
@@ -1518,18 +1873,141 @@ S3FilterFieldChange({
     s3mgr.configure("hrm_competency_rating",
                     deduplicate=hrm_competency_rating_duplicate)
 
+    def hrm_certificate_duplicate(job):
+        """
+          This callback will be called when importing records
+          it will look to see if the record being imported is a duplicate.
+
+          @param job: An S3ImportJob object which includes all the details
+                      of the record being imported
+
+          If the record is a duplicate then it will set the job method to update
+
+          Rules for finding a duplicate:
+           - Look for a record with the same name, ignoring case
+        """
+        # ignore this processing if the id is set
+        if job.id:
+            return
+        if job.tablename == "hrm_certificate":
+            table = job.table
+            name = "name" in job.data and job.data.name
+
+            query = (table.name.lower().like('%%%s%%' % name.lower()))
+            _duplicate = db(query).select(table.id,
+                                          limitby=(0, 1)).first()
+            if _duplicate:
+                job.id = _duplicate.id
+                job.data.id = _duplicate.id
+                job.method = job.METHOD.UPDATE
+
+    s3mgr.configure("hrm_certificate",
+                    deduplicate=hrm_certificate_duplicate)
+
+    def hrm_competency_rating_duplicate(job):
+        """
+          This callback will be called when importing records
+          it will look to see if the record being imported is a duplicate.
+
+          @param job: An S3ImportJob object which includes all the details
+                      of the record being imported
+
+          If the record is a duplicate then it will set the job method to update
+
+          Rules for finding a duplicate:
+           - Look for a record with the same name, ignoring case
+
+           @ToDo: This isn't ideal - if using multiple skill_types then it is
+                  quite feasible for the same name to be used on 2 different
+                  scales
+        """
+        # ignore this processing if the id is set
+        if job.id:
+            return
+        if job.tablename == "hrm_competency_rating":
+            table = job.table
+            name = "name" in job.data and job.data.name
+
+            query = (table.name.lower().like('%%%s%%' % name.lower()))
+            _duplicate = db(query).select(table.id,
+                                          limitby=(0, 1)).first()
+            if _duplicate:
+                job.id = _duplicate.id
+                job.data.id = _duplicate.id
+                job.method = job.METHOD.UPDATE
+
+    s3mgr.configure("hrm_competency_rating",
+                    deduplicate=hrm_competency_rating_duplicate)
+
+    # Shifts as a component of Events
+    s3mgr.model.add_component("hrm_shift",
+                              hrm_event="event_id")
+    # Certificates as a component of Events
+    s3mgr.model.add_component("hrm_certificate",
+                              hrm_event=Storage(
+                                link="hrm_course_certificate",
+                                joinby="event_id",
+                                key="certificate_id",
+                                multiple=False,
+                                actuate="link",
+                                autocomplete="name",
+                                autodelete=False))
+    # HR Record as a component of Persons
     s3mgr.model.add_component("hrm_human_resource",
                               pr_person="person_id")
-    s3mgr.model.add_component("hrm_credential",
+    # Notes as a component of Persons
+    s3mgr.model.add_component("hrm_note",
                               pr_person="person_id")
-    s3mgr.model.add_component("hrm_certification",
-                              pr_person="person_id")
-    s3mgr.model.add_component("hrm_competency",
-                              pr_person="person_id")
-    s3mgr.model.add_component("hrm_training",
-                              pr_person="person_id")
-    s3mgr.model.add_component("hrm_experience",
-                              pr_person="person_id")
+    # Events as a component of Persons
+    s3mgr.model.add_component("hrm_event",
+                              pr_person=Storage(
+                                link="hrm_experience",
+                                joinby="person_id",
+                                key="event_id",
+                                actuate="link",
+                                autocomplete="name",
+                                autodelete=False))
+    # Qualifications (Certificates) as a component of Persons
+    s3mgr.model.add_component("hrm_certificate",
+                              pr_person=Storage(
+                                link="hrm_certification",
+                                joinby="person_id",
+                                key="certificate_id",
+                                actuate="link",
+                                autocomplete="name",
+                                autodelete=False))
+    # Skills as a component of Persons
+    s3mgr.model.add_component("hrm_skill",
+                              pr_person=Storage(
+                                link="hrm_competency",
+                                joinby="person_id",
+                                key="skill_id",
+                                actuate="link",
+                                autocomplete="name",
+                                autodelete=False))
+
+    # Participants of events
+    s3mgr.model.add_component("pr_person",
+                              hrm_event=Storage(
+                                name="participant",
+                                link="hrm_experience",
+                                joinby="event_id",
+                                key="person_id",
+                                actuate="hide"))
+
+    # Not used by CERT:
+    #s3mgr.model.add_component("hrm_training",
+    #                          pr_person="person_id")
+    #s3mgr.model.add_component("hrm_credential",
+    #                          pr_person="person_id")
+
+    s3mgr.model.add_component("hrm_certificate_requirement",
+                              hrm_certificate="certificate_id",
+                              hrm_event=Storage(
+                                            link="hrm_certificate_event",
+                                            joinby="event_id",
+                                            key="requirement_id",
+                                            actuate="hide"))
 
     # =========================================================================
     # Availability
@@ -1544,6 +2022,8 @@ S3FilterFieldChange({
         #7: T("Sunday")
     #}
     #weekdays_represent = lambda opt: ",".join([str(weekdays[o]) for o in opt])
+
+    #from gluon.sqlhtml import CheckboxesWidget
 
     #resourcename = "availability"
     #tablename = "hrm_availability"

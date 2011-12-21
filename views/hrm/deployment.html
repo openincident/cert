@@ -1,0 +1,24 @@
+{{extend "layout.html"}}
+{{try:}}
+ {{=H2(title)}}
+{{except:}}
+{{pass}}
+<div id='rheader'>
+{{try:}}
+ {{=rheader}}
+ </div>
+ <div id='component'>
+{{except:}}
+<div>
+{{pass}}
+  <div class="form-container">
+    <form method="" action=""> 
+      {{=send_btn}}
+    </form>
+  </div>
+    {{if response.s3.rfooter:}}
+	<div id='rfooter'>
+	 {{=XML(response.s3.rfooter)}}
+	</div>
+	{{pass}}
+</div>

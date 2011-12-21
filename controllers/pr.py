@@ -227,7 +227,7 @@ def person():
     if deployment_settings.has_module("hrm"):
         # Load Models
         s3mgr.load("hrm_competency")
-        db.hrm_competency.organisation_id.writable = False
+        #db.hrm_competency.organisation_id.writable = False
         db.hrm_competency.skill_id.comment = None
         s3mgr.model.add_component("hrm_competency",
                                   pr_person="person_id")
@@ -251,7 +251,6 @@ def person():
                                         pr_rheader(r, tabs=tabs))
 
     return output
-
 
 # -----------------------------------------------------------------------------
 def group():

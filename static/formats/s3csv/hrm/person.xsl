@@ -9,6 +9,7 @@
 
          Column headers defined in this stylesheet:
 
+         Type...........................optional.....HR type (staff|volunteer)
          Organisation...................required.....organisation name
          Acronym........................optional.....organisation acronym
          Office.........................required.....office name
@@ -27,7 +28,9 @@
          Skype..........................optional.....person skype ID
          Home Address...................optional.....person home address
          Job Title......................optional.....job title
-         Type...........................optional.....HR type (staff|volunteer)
+         Emergency Contact Name.........optional.....pr_contact_emergency.name
+         Emergency Contact Relationship.optional.....pr_contact_emergency.relationship
+         Emergency Contact Phone........optional.....pr_contact_emergency.phone
 
          Column headers looked up in labels.xml:
 
@@ -201,6 +204,9 @@
             <!-- Contact Information -->
             <xsl:call-template name="ContactInformation"/>
 
+            <!-- Emergency Contact Information -->
+            <xsl:call-template name="EmergencyContactInformation"/>
+
             <!-- Address -->
             <xsl:call-template name="HomeAddress"/>
 
@@ -249,6 +255,19 @@
             <resource name="pr_contact">
                 <data field="contact_method" value="SKYPE"/>
                 <data field="value"><xsl:value-of select="col[@field='Skype']/text()"/></data>
+            </resource>
+        </xsl:if>
+
+    </xsl:template>
+
+    <!-- ****************************************************************** -->
+    <xsl:template name="EmergencyContactInformation">
+
+        <xsl:if test="col[@field='Emergency Contact Name']!=''">
+            <resource name="pr_contact_emergency">
+                <data field="name"><xsl:value-of select="col[@field='Emergency Contact Name']/text()"/></data>
+                <data field="relationship"><xsl:value-of select="col[@field='Emergency Contact Relationship']/text()"/></data>
+                <data field="phone"><xsl:value-of select="col[@field='Emergency Contact Phone']/text()"/></data>
             </resource>
         </xsl:if>
 

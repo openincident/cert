@@ -45,7 +45,7 @@ def index():
         print_tool = {"url": print_service}
     else:
         print_tool = {}
-    
+
     map = gis.show_map(
         lat = 28.5,
         lon = 84.1,
@@ -63,7 +63,7 @@ def index():
         module_name=module_name,
         map=map
     )
-    
+
 month_names = dict(
     January=1,
     February=2,
@@ -91,7 +91,7 @@ def convert_date(default_month):
         components = year_month.split("-")
         year = int(components[0])
         assert 1960 <= year, "year must be >= 1960"
-        
+
         try:
             month_value = components[1]
         except IndexError:
@@ -101,7 +101,7 @@ def convert_date(default_month):
                 month = int(month_value)
             except TypeError:
                 month = month_names[month_value]
-        
+
         assert 1 <= month <= 12, "month must be in range 1:12"
         return datetime.date(year, month, 1)
     return converter
@@ -119,7 +119,7 @@ aggregation_names = ("Maximum", "Minimum", "Average")
 
 def climate_overlay_data():
     kwargs = dict(request.vars)
-    
+
     arguments = {}
     errors = []
     for kwarg_name, converter in dict(
@@ -135,10 +135,10 @@ def climate_overlay_data():
             except TypeError:
                 errors.append("%s is wrong type" % kwarg_name)
             except AssertionError, assertion_error:
-                errors.append("%s: %s" % (kwarg_name, assertion_error))                
+                errors.append("%s: %s" % (kwarg_name, assertion_error))
     if kwargs:
         errors.append("Unexpected arguments: %s" % kwargs.keys())
-    
+
     if errors:
         raise HTTP(400, "<br />".join(errors))
     else:
@@ -180,7 +180,7 @@ def _climate_chart(content_type):
     kwargs = dict(request.vars)
     import gluon.contrib.simplejson as JSON
     specs = JSON.loads(kwargs.pop("spec"))
-    
+
     checked_specs = []
     for spec in specs:
         arguments = {}
@@ -203,7 +203,7 @@ def _climate_chart(content_type):
         if spec:
             errors.append("Unexpected arguments: %s" % spec.keys())
         checked_specs.append(arguments)
-    
+
     if errors:
         raise HTTP(400, "<br />".join(errors))
     else:
@@ -229,20 +229,20 @@ def climate_chart_download():
 
 def chart_popup():
     return {}
-    
+
 def buy_data():
     return {}
-    
+
 def stations():
     "return all station data in JSON format"
     stations_strings = []
     append = stations_strings.append
     extend = stations_strings.extend
-    
+
     for place_row in db(
         (db.climate_place.id == db.climate_place_elevation.id) &
         (db.climate_place.id == db.climate_place_station_id.id) &
-        (db.climate_place.id == db.climate_place_station_name.id) 
+        (db.climate_place.id == db.climate_place_station_name.id)
     ).select(
         db.climate_place.id,
         db.climate_place.longitude,
@@ -266,7 +266,7 @@ def places():
     places_strings = []
     append = places_strings.append
     extend = places_strings.extend
-    
+
     for place_row in db().select(
         db.climate_place.id,
         db.climate_place.longitude,

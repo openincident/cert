@@ -337,9 +337,9 @@ organisation_comment = DIV(A(ADD_ORGANIZATION,
                            _title=ADD_ORGANIZATION),
                          DIV(DIV(_class="tooltip",
                                  _title="%s|%s" % (T("Organization"),
-                                                   T("Enter some characters to bring up a list of possible matches")))))
+                                                   #T("Enter some characters to bring up a list of possible matches")))))
                                                    # Replace with this one if using dropdowns & not autocompletes
-                                                   #T("If you don't see the Organization in the list, you can add a new one by clicking link 'Add Organization'.")))))
+                                                   T("If you don't see the Organization in the list, you can add a new one by clicking link 'Add Organization'.")))))
 
 from_organisation_comment = copy.deepcopy(organisation_comment)
 from_organisation_comment[0]["_href"] = organisation_comment[0]["_href"].replace("popup", "popup&child=from_organisation_id")
@@ -355,7 +355,7 @@ organisation_id = S3ReusableField("organisation_id",
                                   comment = organisation_comment,
                                   ondelete = "RESTRICT",
                                   # Comment this to use a Dropdown & not an Autocomplete
-                                  widget = S3OrganisationAutocompleteWidget()
+                                  #widget = S3OrganisationAutocompleteWidget()
                                  )
 
 # -----------------------------------------------------------------------------

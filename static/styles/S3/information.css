@@ -1,0 +1,17 @@
+.information-wrapper {
+    width: 500px;
+}
+
+.information-wrapper .editBtn {
+    float: right;
+}
+
+.information-wrapper input[type=submit] {
+    float: right;
+}
+
+.information-wrapper .contact.saving .editBtn,
+.information-wrapper .contact.edit .editBtn {
+    display: none;
+}
+

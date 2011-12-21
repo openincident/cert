@@ -1328,6 +1328,7 @@ div#last_update {
 #menu_box_1 {
 	width: 660px;
 	float: left;
+	background-color: #fff;
 }
 
 #menu_box_2 {
@@ -1347,9 +1348,48 @@ div#last_update {
 	width: 280px;
 }
 
-.menu_div, .div_arrow {
+#menu_box_1 {
+    width: 800px;
+    height: 606px;
+	margin: 0 auto;
+	float: none;
+	background: url("../../img/home/gradient_bg.png") no-repeat 0 0;
+	
+}
+#sit_dec_res_box {
+	border: none;
+	margin:75px;
+}
+.menu_div {
 	float: left;
-	width: auto;
+	width: 210px;
+}
+
+.menu_div h3 {
+	text-indent: -9999px;
+}
+.menu_div .icon {
+	width: 128px;
+	height: 128px;
+	margin: 0 auto;
+	text-indent: -9999px;
+}
+#menu_div_evt .icon {background: url("../../img/home/events.png") no-repeat 0 0;}
+#menu_div_vol .icon {background: url("../../img/home/volunteers.png") no-repeat 0 0;}
+#menu_div_qua .icon {background: url("../../img/home/qualifications.png") no-repeat 0 0;}
+#menu_div_adm .icon {background: url("../../img/home/deployments.png") no-repeat 0 0;}
+#menu_div_not .icon {background: url("../../img/home/notifications.png") no-repeat 0 0;}
+#menu_div_rep .icon {background: url("../../img/home/reports.jpg") no-repeat 0 0;}
+
+.menu_div div {
+	text-align: center;
+	margin: 5px 0;
+}
+
+.menu_div div a {
+	color: #000;
+	text-decoration: none;
+	font-size: 14px;
 }
 
 #facility_box {

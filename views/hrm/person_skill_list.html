@@ -1,0 +1,37 @@
+{{extend "layout.html"}}
+{{try:}}
+ {{=H2(title)}}
+{{except:}}
+{{pass}}
+<div id='rheader'>
+{{try:}}
+ {{=XML(rheader)}}
+ </div>
+ <div id='component'>
+{{except:}}
+</div>
+{{pass}}
+{{try:}}
+ {{=H3(subtitle)}}
+{{except:}}
+{{pass}}
+<style type="text/css">
+/* Move to styles/s3/sahana.css */
+.skill-name {font-weight: bold; padding: 2px 5px;}
+.skill-rank {text-align: right;}
+</style>
+{{try:}}
+<table id='skill-container'>
+ {{for skill in skills:}}
+  <tr><td class='skill-name'>{{=skill["name"]}}</td><td class='skill-rank skill-{{=skill["class"]}}'>{{=skill["level"]}}</td></tr>
+ {{pass}}
+</table>
+{{except:}}
+{{pass}}
+</div>
+{{if response.s3.rfooter:}}
+<div id='rfooter'>
+ {{=XML(response.s3.rfooter)}}
+</div>
+{{pass}}
+{{include "dataTables.html"}}

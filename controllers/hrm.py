@@ -95,7 +95,7 @@ def index():
                                  "person_id",
                                  "job_title",
                                  "type",
-                                 "site_id"])
+                                 "status"])
 
     response.s3.filter = org_filter
     # Parse the Request
@@ -135,12 +135,248 @@ def index():
     return output
 
 # =============================================================================
+# Events
+# =============================================================================
+def event():
+    """ RESTful Controller """
+
+    s3mgr.load("hrm_event")
+
+    s3mgr.model.set_method(module, resourcename,
+                           method="deployment",
+                           action=deployment)
+
+    def prep(r):
+        if r.interactive:
+            if not r.component:
+                script = "s3.certreq.js"
+                response.s3.scripts.append( "%s/%s" % (response.s3.script_dir, script))
+                if r.record is not None:
+                    certificate_id = r.record.certificate_id
+                    if certificate_id:
+                        rtable = db.hrm_certificate_requirement
+                        query = (rtable.deleted != True) & \
+                                (rtable.certificate_id == certificate_id)
+                        r.table.requirement_id.requires = IS_NULL_OR(IS_ONE_OF(db(query),
+                                                                "hrm_certificate_requirement.id",
+                                                                "%(event_type)s",
+                                                                orderby="hrm_certificate_requirement.event_type"))
+            if r.component:
+                if r.component_name == "shift":
+                    if not r.record.shift_locations:
+                        field = db.hrm_shift.location_id
+                        field.readable = False
+                        field.writable = False
+                        field.default = r.record.location_id
+                elif r.component_name == "certificate":
+                    s3.crud_strings["hrm_certificate"].update(
+                        title_create = T("Add Certificate to Event"),
+                        title_display = T("Certificate Details"),
+                        title_list = T("Certificates"),
+                        title_update = T("Edit Certificate"),
+                        subtitle_create = T("Add New Certificate"),
+                        subtitle_list = T("Event Certificates"),
+                        label_list_button = T("All Certificates"),
+                        label_create_button = T("Add Certificate"),
+                        label_delete_button = T("Remove Certificate"),
+                        msg_record_created = T("Certificate Added To Event"),
+                        msg_record_modified = T("Certificate Updated"),
+                        msg_record_deleted = T("Certificate Removed"),
+                        msg_no_match = T("No entries found"),
+                        msg_list_empty = T("Currently No Certificates registered"))
+                elif r.component_name == "participant":
+                    s3mgr.load("hrm_experience")
+                    etable = db.hrm_experience
+                    etable.person_id.comment = None
+                    etable.person_id.widget = S3AddPersonWidget()
+                    etable.person_id.requires = IS_ADD_PERSON_WIDGET()
+
+                    s3.crud_strings["hrm_experience"] = Storage(
+                        title_create = T("Add Participant"),
+                        title_display = T("Participant Details"),
+                        title_list = T("Participants"),
+                        title_update = T("Edit Participant"),
+                        title_search = T("Search Participants"),
+                        subtitle_create = T("Add Participant"),
+                        subtitle_list = T("Participants"),
+                        label_list_button = T("List Participants"),
+                        label_create_button = T("Add Participant"),
+                        label_delete_button = T("Delete Participant"),
+                        msg_record_created = T("Participant added"),
+                        msg_record_modified = T("Participant updated"),
+                        msg_record_deleted = T("Participant deleted"),
+                        msg_no_match = T("No entries found"),
+                        msg_list_empty = T("Currently no Participants registered for this event"))
+
+        if r.http == "POST":
+            type = request.post_vars.get("type", None)
+            shifts = request.post_vars.get("shifts", None)
+            if type == "1":
+                # Training events should direct to the Equivalence table
+                s3mgr.configure("hrm_event",
+                                create_next = URL(args=["[id]", "certificate"]))
+            elif shifts:
+                # Open the Shifts tab
+                s3mgr.configure("hrm_event",
+                                create_next = URL(args=["[id]", "shift"]))
+            else:
+                # Open the Deployment tab
+                s3mgr.configure("hrm_event",
+                                create_next = URL(args=["[id]", "deployment"]))
+                s3mgr.configure("hrm_course_certificate",
+                                create_next = URL(args=[r.id, "deployment"]))
+
+        return True
+    response.s3.prep = prep
+
+    output = s3_rest_controller(module, resourcename,
+                                rheader=event_rheader)
+    return output
+
+def event_over_check(event):
+    """
+        Determine whether the event is over & hence  can be added as
+        participants to an Event
+    """
+    if not event.shifts:
+        if not event.datetime:
+            # We have no idea, so default to allowing
+            return True
+        if event.hours:
+            if request.utcnow > event.datetime + datetime.timedelta(hours = event.hours):
+                return True
+        elif request.utcnow > event.datetime:
+            return True
+        return False
+    else:
+        # @ToDo
+        return True
+
+# -----------------------------------------------------------------------------
+def event_rheader(r):
+    """ Resource Header for Events """
+
+    rheader = None
+    if r.representation == "html":
+        if r.name == "event":
+            event = r.record
+            if event:
+                # Event Controller
+                tabs = [(T("Event Details"), None)]
+                if event.shifts:
+                    tabs.append((T("Shifts"), "shift"))
+                if event.type == 1: # Training
+                    tabs.append((T("Qualifications"), "certificate"))
+                tabs.append((T("Deployment"), "deployment"))
+                if event_over_check(event):
+                    # Allow people to be registered as having attended the event
+                    tabs.append((T("Participants"), "participant"))
+                rheader_tabs = s3_rheader_tabs(r, tabs)
+
+                rheader = DIV(TABLE(TR(TH("%s: " % T("Name")),
+                                       event.name,
+                                       TH("%s: " % T("Type")),
+                                       db.hrm_event.type.represent(event.type)),
+                                    TR(TH("%s: " % T("Initiating Entity")),
+                                       organisation_represent(event.organisation_id),),
+                                    TR(TH("%s: " % T("Notes")),
+                                       event.comments),
+                                    ), rheader_tabs)
+
+    return rheader
+
+# -----------------------------------------------------------------------------
+def deployment(r, **attr):
+    """
+        Custom method of Events to handle Deployments
+        http://eden.sahanafoundation.org/wiki/BluePrintCERT/RHoK2011#a2.Deployment
+    """
+
+    if r.representation == "html" and \
+       r.name == "event" and r.id and not r.component:
+
+        s3mgr.load("msg_outbox")
+        msg_compose = response.s3.msg_compose
+
+        record = r.record
+        if record.datetime:
+            date = " at %s" % s3_datetime_represent(record.datetime)
+        else:
+            date = ""
+        text = "%s%s: %s" % (record.name,
+                             date,
+                             record.comments)
+
+        message = msg.prepare_opengeosms(record.location_id,
+                                         code="ST",
+                                         map="google",
+                                         text=text)
+
+        # Pass in the appropriate Contact List
+        gtable = db.pr_group
+        query = (gtable.uuid == record.type)
+        recipient = db(query).select(gtable.pe_id,
+                                     limitby=(0, 1)).first()
+        if recipient:
+            recipient = recipient.pe_id
+
+        output = msg_compose(type="SMS",
+                             recipient = recipient,
+                             recipient_type = "pr_group",
+                             message = message,
+                             redirect_module = "hrm",
+                             redirect_function = "event",
+                             redirect_args = r.id)
+
+        # Maintain RHeader for consistency
+        rheader = event_rheader(r)
+
+        title = T("Send Deployment Notification")
+
+        output.update(title=title,
+                      rheader=rheader)
+
+        #if form.accepts(request.vars, session):
+
+        response.view = "msg/compose.html"
+        return output
+
+    else:
+        raise HTTP(501, BADMETHOD)
+
+# -----------------------------------------------------------------------------
+def experience():
+    """
+        Upload of a class participant list
+
+        @todo: add certificate selector to both, manual import & upload
+        @todo: implement list_fields
+        @todo: implement event-based/date-based filters (S3Search)
+    """
+
+    s3mgr.load("hrm_experience")
+
+    s3.crud_strings["hrm_experience"].update(
+        title_report=T("Volunteer Report"),
+        subtitle_report=T("Volunteer Hours"),
+        title_upload = T("Upload Participant List"))
+
+    s3mgr.configure("hrm_experience",
+                    insertable=False, editable=False, deletable=False)
+
+    output = s3_rest_controller(module, resourcename,
+                                csv_template = "experience",
+                                csv_extra_fields = [
+                                        dict(label="Event",
+                                             field=db.hrm_experience.event_id)
+                                    ])
+    return output
+
+# =============================================================================
 # People
 # =============================================================================
 def human_resource():
-    """
-        HR Controller
-    """
+    """ HR Controller """
 
     # Load Models
     s3mgr.load("pr_address")
@@ -397,6 +633,140 @@ def hrm_map_popup(r):
     return output
 
 # -----------------------------------------------------------------------------
+def information(r, **attr):
+    """
+        Custom Method to provide the deatils for the Person's 'Information' Tab:
+            http://eden.sahanafoundation.org/wiki/BluePrintCERT/RHoK2011#Infotab
+        This should provide a single view on:
+            Address (pr_address)
+            Contacts (pr_contact)
+            Emergency Contacts
+    """
+
+    import itertools
+
+    if r.http != "GET":
+        r.error(405, s3mgr.ERROR.BAD_METHOD)
+
+    person = r.record
+
+    atable = db.pr_address
+    ctable = db.pr_contact
+    ltable = db.pr_group_membership
+
+    # Do the contacts
+    query = (ctable.pe_id == person.pe_id)
+    contacts = db(query).select(orderby=ctable.contact_method)
+
+    from itertools import groupby
+
+    contact_groups = {}
+    for key, group in groupby(contacts, lambda c: c.contact_method):
+        contact_groups[key] = list(group)
+
+    contacts_wrapper = DIV(_class="contacts")
+
+    for contact_type, details in contact_groups.items():
+        contacts_wrapper.append(H3(msg.CONTACT_OPTS[contact_type]))
+        for detail in details:
+            contacts_wrapper.append(P(
+                SPAN(detail.value),
+                A(T("Edit"), _class="editBtn"),
+                _id="contact-%s" % detail.id,
+                _class="contact",
+                ))
+
+    # Do the addresses
+    query = (atable.pe_id == person.pe_id)
+    addresses = db(query).select()
+
+    address_wrapper = DIV(_class="addresses")
+
+    # We don't want to edit/view comments on the address here.
+    atable.comments.writable = False
+    atable.comments.readable = False
+    atable.id.readable = False
+    s3mgr.configure(atable, update_next=URL(c="hrm", f="person",
+                                            args=[person.id, "information"]))
+
+    if addresses:
+        address_wrapper.append(H3(T("Home Address")))
+
+        for address in addresses:
+            building_name = address.building_name or ""
+            _address = address.address or ""
+            address_wrapper.append(P("%s, %s" % (building_name,
+                                                 _address)))
+            address_wrapper.append(A(T("Edit"), _class="editBtn"))
+            # Get the address form
+            address_wrapper.append(DIV(
+                SQLFORM(atable, address, _class="hidden"),
+                _class="form-container",
+                _id="address-edit"
+            ))
+
+    query = (ltable.person_id == r.id)
+    lists = db(query).select()
+
+    lists_wrapper = DIV(_class="lists")
+    ltable.comments.writable = False
+    ltable.comments.readable = False
+    ltable.id.readable = False
+
+    if lists:
+        lists_wrapper.append(H3(T("Contact Groups")))
+        list_string = ", ".join(map(lambda l: l.group_id.name, lists))
+        lists_wrapper.append(P(list_string))
+
+    # Custom View
+    response.view = "hrm/information.html"
+
+    # RHeader for consistency
+    rheader = hrm_rheader(r)
+
+    # Put whatever you want in here
+    information = DIV(address_wrapper, contacts_wrapper, lists_wrapper,
+                      _class="information-wrapper")
+
+    # Add the javascript
+    response.s3.scripts.append(URL(c="static", f="scripts",
+                               args=["S3", "s3.information.js"]))
+    response.s3.js_global.append("personId = %s;" % person.id);
+
+    return dict(
+            title = T("Volunteer Profile"),
+            rheader = rheader,
+            information = information,
+        )
+
+# -----------------------------------------------------------------------------
+def events(r, **attr):
+    """
+        Custom Method to provide the details for the Person's 'Events' Tab:
+            http://eden.sahanafoundation.org/wiki/BluePrintCERT/RHoK2011#Eventstab
+        This should provide a formatted view of the person's upcoming events
+    """
+
+    person = r.record
+
+    table = db.hrm_event
+
+    # Put whatever you want in here
+    events = DIV("tbc")
+
+    # Custom View
+    response.view = "hrm/events.html"
+
+    # RHeader for consistency
+    rheader = hrm_rheader(r)
+
+    return dict(
+            title = T("Volunteer Profile"),
+            rheader = rheader,
+            events = events
+        )
+
+# -----------------------------------------------------------------------------
 def person():
     """
         Person Controller
@@ -409,6 +779,10 @@ def person():
     s3mgr.model.add_component("hrm_human_resource",
                               pr_person="person_id")
 
+    s3mgr.configure("pr_person",
+                    # Stay on the record with tabs visible
+                    update_next = URL(args=["[id]", "update"]))
+
     if deployment_settings.has_module("asset"):
         # Assets as component of people
         s3mgr.model.add_component("asset_asset",
@@ -419,6 +793,14 @@ def person():
                         insertable = False,
                         editable = False,
                         deletable = False)
+
+    s3mgr.model.set_method("pr", resourcename,
+                           method="information",
+                           action=information)
+
+    s3mgr.model.set_method("pr", resourcename,
+                           method="events",
+                           action=events)
 
     group = request.get_vars.get("group", "staff")
     hr_id = request.get_vars.get("human_resource.id", None)
@@ -522,6 +904,7 @@ def person():
 
     if session.s3.hrm.mode is not None:
         # Configure for personal mode
+        # - unused by CERT currently
         db.hrm_human_resource.organisation_id.readable = True
         s3.crud_strings[tablename].update(
             title_display = T("Personal Profile"),
@@ -542,7 +925,8 @@ def person():
         s3mgr.configure("hrm_competency",
                         insertable = True,  # Can add unconfirmed
                         editable = False,
-                        deletable = False)
+                        deletable = False,
+                        listadd = False)
         s3mgr.configure("hrm_training",    # Can add but not provide grade
                         insertable = True,
                         editable = False,
@@ -555,18 +939,7 @@ def person():
                         insertable = False,
                         editable = False,
                         deletable = False)
-        tabs = [(T("Person Details"), None),
-                (address_tab_name, "address"),
-                (T("Contact Details"), "contact"),
-                (T("Skills"), "competency"),
-                #(T("Credentials"), "credential"),
-                (T("Certificates"), "certification"),
-                (T("Trainings"), "training"),
-                (T("Mission Record"), "experience"),
-                (T("Positions"), "human_resource"),
-                (T("Teams"), "group_membership")]
-        if deployment_settings.has_module("asset"):
-            tabs.append((T("Assets"), "asset"))
+
     else:
         # Configure for HR manager mode
         s3.crud_strings[tablename].update(
@@ -581,15 +954,13 @@ def person():
                 title_display = T("Volunteer Details"),
                 title_update = T("Volunteer Details"))
             hr_record = T("Volunteer Record")
-        tabs = [(T("Person Details"), None),
-                (hr_record, "human_resource"),
-                (address_tab_name, "address"),
-                (T("Contact Data"), "contact"),
-                (T("Skills"), "competency"),
-                (T("Credentials"), "credential"),
-                (T("Trainings"), "training"),
-                (T("Mission Record"), "experience"),
-                (T("Teams"), "group_membership")]
+
+        # These are all added via the Certifications
+        s3mgr.configure("hrm_competency",
+                        insertable = False,
+                        editable = False,
+                        deletable = False,
+                        listadd = False)
 
         if deployment_settings.has_module("asset"):
             tabs.append((T("Assets"), "asset"))
@@ -668,6 +1039,23 @@ def person():
             if not r.record:
                 session.error = T("Record not found")
                 redirect(URL(group, args=["search"]))
+            elif r.component_name == "event":
+                s3.crud_strings["hrm_experience"] = Storage(
+                    title_create = T("Add Event"),
+                    title_display = T("Event Details"),
+                    title_list = T("Events"),
+                    title_update = T("Edit Event"),
+                    title_search = T("Search Events"),
+                    subtitle_create = T("Add Event"),
+                    subtitle_list = T("Events"),
+                    label_list_button = T("List Events"),
+                    label_create_button = T("Add Event"),
+                    label_delete_button = T("Delete Event"),
+                    msg_record_created = T("Event added"),
+                    msg_record_modified = T("Event updated"),
+                    msg_record_deleted = T("Event deleted"),
+                    msg_no_match = T("No entries found"),
+                    msg_list_empty = T("Currently no Events participated in"))
             if hr_id and r.component_name == "human_resource":
                 r.component_id = hr_id
             s3mgr.configure("hrm_human_resource",
@@ -682,34 +1070,101 @@ def person():
         orgname=session.s3.hrm.orgname
     else:
         orgname=None
-    rheader = lambda r, tabs=tabs: hrm_rheader(r, tabs)
 
     output = s3_rest_controller("pr", resourcename,
                                 native=False,
-                                rheader=rheader,
-                                orgname=orgname,
-                                template="person",
-                                replace_option=T("Remove existing data before import"))
+                                rheader=hrm_rheader,
+                                skills=hrm_skills,
+                                orgname=orgname)
     return output
 
 # -----------------------------------------------------------------------------
-def hrm_rheader(r, tabs=[]):
+def contact():
+    """ RESTful controller to allow S3JSON submission of contact records """
+    response.s3.prep = lambda r: r.representation == "s3json"
+    return s3_rest_controller("pr", "contact")
+
+# -----------------------------------------------------------------------------
+def hrm_rheader(r):
     """ Resource headers for component views """
 
     rheader = None
-    rheader_tabs = s3_rheader_tabs(r, tabs)
 
     if r.representation == "html":
 
         if r.name == "person":
             # Person Controller
+
+            if session.s3.hrm.mode is not None:
+                # Configure for personal use
+                # (not used for CERT)
+                tabs = [
+                        #(T("Person Details"), None),
+                        (T("Information"), "information"),
+                        # Read-only view
+                        (T("Skills"), "person/skill"),
+                        #(T("Participation"), "experience"),
+                        (T("Participation"), "event"),
+                        (T("Events"), "events"),
+                        ]
+            else:
+                # Configure for HR manager mode
+                tabs = [
+                        #(T("Person Details"), None),
+                        #(hr_record, "human_resource"),
+                        (T("Information"), "information"),
+                        # Read-only view
+                        (T("Skills"), "person/skill"),
+                        # Edit view
+                        # @ToDo: Custom Method for Qualifications?
+                        #(T("Qualifications"), "qualification"),
+                        #(T("Qualifications"), "competency"),
+                        (T("Qualifications"), "certificate"),
+                        #(T("Participation"), "experience"),
+                        (T("Participation"), "event"),
+                        (T("Notes"), "note"),
+                        (T("Events"), "events"),
+                        ]
+
+            rheader_tabs = s3_rheader_tabs(r, tabs)
+
             person = r.record
             if person:
+                # Calculate the Volunteer Hours
+                # @ToDo: Consider doing this onaccept of Experience instead of calculated on Reads?
+                table = db.hrm_human_resource
+                row = db(table.person_id == person.id).select(table.status).first()
+                s = ""
+                if row:
+                    status = db.hrm_human_resource.status.represent(row.status)
+                table = db.hrm_experience
+                eventIDs = db(table.person_id == person.id).select(table.event_id)
+                hours = 0
+                if eventIDs:
+                    table = db.hrm_event
+                    for eventID in eventIDs:
+                        query = (table.id == eventID.event_id)
+                        event = db(query).select(table.type,
+                                                 table.datetime,
+                                                 table.hours,
+                                                 limitby=(0, 1)).first()
+                        # Do not count social events as volunteer hours
+                        if event.type != "SOCIAL":
+                            if not event.datetime:
+                                hours += int(event.hours)
+                            elif event.datetime < datetime.datetime.now() and \
+                                 event.datetime.year == datetime.datetime.now().year:
+                                hours += int(event.hours)
+
                 rheader = DIV(s3_avatar_represent(person.id,
                                                   "pr_person",
                                                   _class="fleft"),
                               TABLE(
                     TR(TH(s3_fullname(person))),
+                    TR("%s: %s" % (T("Status"), status)),
+                    TR("%s %s: %s" % (datetime.datetime.now().year,
+                                      T("Volunteer Hours"),
+                                      hours)),
                     ), rheader_tabs)
 
         elif r.name == "human_resource":
@@ -725,6 +1180,27 @@ def hrm_rheader(r, tabs=[]):
                 pass
 
     return rheader
+
+# -----------------------------------------------------------------------------
+def hrm_skills(r):
+    """
+        Generate skills grid for hrm/person/skill tab.
+    """
+
+    if r.component_name == "skill" and not r.component_id:
+
+        query = (db.hrm_competency.person_id == r.id)
+        skillset = db(query).select(orderby=db.hrm_competency.skill_id.name)
+
+        skills = []
+        for skill in skillset:
+            skills.append({
+                "name": skill.skill_id.name,
+                "level": skill.competency_id.name,
+                "class": skill.competency_id.name.replace(" ", "").lower()
+            })
+        return skills
+    return None
 
 # =============================================================================
 # Teams
@@ -743,43 +1219,45 @@ def group():
     table.description.label = T("Team Description")
     table.name.label = T("Team Name")
     db.pr_group_membership.group_id.label = T("Team ID")
-    db.pr_group_membership.group_head.label = T("Team Leader")
+    db.pr_group_membership.group_head.readable == False
+    db.pr_group_membership.group_head.writable == False
+    #db.pr_group_membership.group_head.label = T("Team Leader")
 
     # Set Defaults
     table.group_type.default = 3  # 'Relief Team'
     table.group_type.readable = table.group_type.writable = False
 
     # CRUD Strings
-    ADD_TEAM = T("Add Team")
-    LIST_TEAMS = T("List Teams")
+    ADD_TEAM = T("Add Contact List")
+    LIST_TEAMS = T("List Contact Lists")
     s3.crud_strings[tablename] = Storage(
         title_create = ADD_TEAM,
-        title_display = T("Team Details"),
+        title_display = T("Contact List Details"),
         title_list = LIST_TEAMS,
-        title_update = T("Edit Team"),
-        title_search = T("Search Teams"),
-        subtitle_create = T("Add New Team"),
-        subtitle_list = T("Teams"),
+        title_update = T("Edit Contact List"),
+        title_search = T("Search Contact Lists"),
+        subtitle_create = T("Add New Contact List"),
+        subtitle_list = T("Contact Lists"),
         label_list_button = LIST_TEAMS,
-        label_create_button = T("Add New Team"),
-        label_search_button = T("Search Teams"),
-        msg_record_created = T("Team added"),
-        msg_record_modified = T("Team updated"),
-        msg_record_deleted = T("Team deleted"),
-        msg_list_empty = T("No Teams currently registered"))
+        label_create_button = ADD_TEAM,
+        label_search_button = T("Search Contact Lists"),
+        msg_record_created = T("Contact List added"),
+        msg_record_modified = T("Contact List updated"),
+        msg_record_deleted = T("Contact List deleted"),
+        msg_list_empty = T("No Contact Lists currently registered"))
 
     s3.crud_strings["pr_group_membership"] = Storage(
         title_create = T("Add Member"),
         title_display = T("Membership Details"),
-        title_list = T("Team Members"),
+        title_list = T("Contact List Members"),
         title_update = T("Edit Membership"),
         title_search = T("Search Member"),
         subtitle_create = T("Add New Member"),
-        subtitle_list = T("Current Team Members"),
+        subtitle_list = T("Current Contact List Members"),
         label_list_button = T("List Members"),
         label_create_button = T("Add Group Member"),
         label_delete_button = T("Delete Membership"),
-        msg_record_created = T("Team Member added"),
+        msg_record_created = T("Contact List Member added"),
         msg_record_modified = T("Membership updated"),
         msg_record_deleted = T("Membership deleted"),
         msg_list_empty = T("No Members currently registered"))
@@ -813,7 +1291,7 @@ def group():
     response.s3.postp = postp
 
     tabs = [
-            (T("Team Details"), None),
+            (T("Contact List Details"), None),
             # Team should be contacted either via the Leader or
             # simply by sending a message to the group as a whole.
             #(T("Contact Data"), "contact"),
@@ -966,8 +1444,58 @@ def certificate():
     # Load Models
     s3mgr.load("hrm_skill")
 
-    output = s3_rest_controller(module, resourcename)
+    output = s3_rest_controller(module, resourcename,
+                                rheader=certificate_rheader)
     return output
+
+def certificate_rheader(r):
+
+    rheader = None
+
+    if r.representation == "html" and r.name == "certificate":
+        certificate = r.record
+        tabs = [
+                (T("Certificate"), None),
+                (T("Requirements"), "certificate_requirement")
+               ]
+        if r.record is not None:
+            rheader_tabs = s3_rheader_tabs(r, tabs)
+            rheader = DIV(TABLE(
+                        TR(
+                            TH("%s: " % T("Certificate")),
+                            TD(certificate.name)
+                        )), rheader_tabs)
+    return rheader
+
+def requirements():
+    """
+        Returns a SELECT with the options of the selected
+        certificate (=first URL argument). Called from JS
+        to dynamically update the select list in the event form.
+    """
+
+    if len(request.args):
+        from gluon.sqlhtml import OptionsWidget
+        certificate_id = request.args[0]
+        s3mgr.load("hrm_certificate_requirement")
+        etable = db.hrm_event
+        rtable = db.hrm_certificate_requirement
+        query = (rtable.deleted != True) & \
+                (rtable.certificate_id == certificate_id)
+        if db(query).count():
+            _has_options = 'true'
+        else:
+            _has_options = 'false'
+        etable.requirement_id.requires = IS_NULL_OR(IS_ONE_OF(db(query),
+                                            "hrm_certificate_requirement.id",
+                                            "%(event_type)s",
+                                            orderby="hrm_certificate_requirement.event_type")),
+        widget = OptionsWidget.widget(etable.requirement_id, None,
+                                      _has_options=_has_options)
+        return widget
+
+    return SELECT(OPTION(None, _value=""),
+                  _id="hrm_event_requirement_id", _has_options='false')
 
 # -----------------------------------------------------------------------------
 def certificate_skill():
@@ -1049,7 +1577,7 @@ def compose():
         fieldname = "group_id"
         table = db.pr_group
         query = (table.id == id)
-        title = T("Send a message to this team")
+        title = T("Send a message to this contact list")
 
     pe = db(query).select(table.pe_id,
                           limitby=(0, 1)).first()

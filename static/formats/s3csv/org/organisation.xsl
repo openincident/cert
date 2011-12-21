@@ -82,8 +82,8 @@
 
             <data field="country">
                 <xsl:value-of select="col[@field='Country']"/>
-                <!--<xsl:call-template name="iso2countryname">
-                    <xsl:with-param name="country" select="col[@field='country']"/>
+<!--                <xsl:call-template name="countryname2iso">
+                    <xsl:with-param name="country" select="col[@field='Country']"/>
                 </xsl:call-template>-->
             </data>
             <data field="region"><xsl:value-of select="col[@field='Region']"/></data>
